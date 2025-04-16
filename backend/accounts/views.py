@@ -1,27 +1,57 @@
-from rest_framework import status, generics
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import authenticate, login, logout
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters
+
+from rest_framework import status, generics, views
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import ValidationError
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
+
 from .models import User
 from .serializers import UserSerializer, UserProfileSerializer
-from rest_framework.decorators import permission_classes, api_view
+from .permissions import IsOwnerOrAdmin
+
 
 class RegisterView(generics.CreateAPIView):
-    """
-    API endpoint для регистрации нового пользователя
-    """
+    queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = (AllowAny,)  # Используйте кортеж вместо списка
+    permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle]
+    
+    @method_decorator(sensitive_post_parameters('password', 'password_confirm'))
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = self.perform_create(serializer)
+        
+        login(request, user)
+        
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data, 
+            status=status.HTTP_201_CREATED, 
+            headers=headers
+        )
+    
+    def perform_create(self, serializer):
+        return serializer.save()
 
-class LoginView(APIView):
-    """
-    API endpoint для входа пользователя
-    """
-    permission_classes = (AllowAny,)  # Используйте кортеж вместо списка
+
+class LoginView(views.APIView):
+    permission_classes = (AllowAny,)
+    throttle_classes = [AnonRateThrottle]
+    
+    @method_decorator(sensitive_post_parameters('password'))
+    @method_decorator(never_cache)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
     
     def post(self, request):
-        # ... существующий код ...
         email = request.data.get('email')
         password = request.data.get('password')
         
@@ -34,31 +64,58 @@ class LoginView(APIView):
         user = authenticate(request, username=email, password=password)
         
         if user is not None:
+            if not user.is_active:
+                return Response(
+                    {'error': 'Аккаунт деактивирован'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             login(request, user)
             serializer = UserSerializer(user)
-            return Response(serializer.data)
+            return Response({
+                'user': serializer.data,
+                'message': f'Добро пожаловать, {user.full_name}!'
+            })
         else:
             return Response(
                 {'error': 'Неверные учетные данные'},
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-class LogoutView(APIView):
-    """
-    API endpoint для выхода пользователя
-    """
+
+class LogoutView(views.APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
         logout(request)
-        return Response({'message': 'Успешный выход из системы'})
+        return Response({
+            'message': 'Успешный выход из системы'
+        })
+
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
-    """
-    API endpoint для получения и обновления профиля пользователя
-    """
     serializer_class = UserProfileSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrAdmin]
+    throttle_classes = [UserRateThrottle]
+    
+    @method_decorator(sensitive_post_parameters('password'))
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
     
     def get_object(self):
-        return self.request.user
+
+        obj = self.request.user
+        self.check_object_permissions(self.request, obj)
+        return obj
+    
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+            
+        return Response(serializer.data)
