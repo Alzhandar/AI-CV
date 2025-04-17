@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai_cv_backend
+    container_name: ai_cv_web
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - db_logs
+      - mongodb
+      - redis
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_HOST=db
+      - MYSQL_HOST=db_logs
+      - MONGO_HOST=mongodb
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+  db:
+    image: postgres:14-alpine
+    container_name: ai_cv_postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+
+  db_logs:
+    image: mysql:8
+    container_name: ai_cv_mysql
+    volumes:
+      - mysql_data:/var/lib/mysql
+    env_file:
+      - ./.env
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DB}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  mongodb:
+    image: mongo:4.4
+    container_name: ai_cv_mongodb
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=${MONGO_DB_NAME}
+
+  redis:
+    image: redis:6-alpine
+    container_name: ai_cv_redis
+    ports:
+      - "6379:6379"
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_cv_celery
+    command: celery -A resume_analyzer worker -l info
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+    depends_on:
+      - redis
+      - db
+      - db_logs
+      - mongodb
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_HOST=db
+      - MYSQL_HOST=db_logs
+      - MONGO_HOST=mongodb
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_cv_celery_beat
+    command: celery -A resume_analyzer beat -l info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - db
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_HOST=db
+      - MYSQL_HOST=db_logs
+      - MONGO_HOST=mongodb
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+volumes:
+  postgres_data:
+  mysql_data:
+  mongodb_data:
+  static_volume:
+  media_volume:
