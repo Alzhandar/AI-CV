@@ -1,3 +1,5 @@
+#!/bin/bash
+
 set -e
 
 until nc -z $POSTGRES_HOST 5432; do
@@ -5,7 +7,7 @@ until nc -z $POSTGRES_HOST 5432; do
   sleep 2
 done
 
-until nc -z $MYSQL_HOST 3306; do
+until nc -z $MYSQL_HOST 3306; do 
   echo "Ожидание запуска MySQL..."
   sleep 2
 done
@@ -24,15 +26,4 @@ python manage.py migrate --database=logs
 echo "Сбор статических файлов..."
 python manage.py collectstatic --noinput
 
-echo "Проверка наличия суперпользователя..."
-python -c "
-import os
-from django.contrib.auth import get_user_model;
-User = get_user_model();
-if not User.objects.filter(email='${DJANGO_ADMIN_EMAIL:-admin@example.com}').exists():
-    User.objects.create_superuser('${DJANGO_ADMIN_EMAIL:-admin@example.com}', '${DJANGO_ADMIN_PASSWORD:-admin}')
-    print('Суперпользователь создан.');
-else:
-    print('Суперпользователь уже существует.');
-"
 exec "$@"
