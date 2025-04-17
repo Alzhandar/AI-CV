@@ -8,34 +8,18 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 class AIResumeAnalyzer:
-    """
-    Класс для анализа резюме с использованием OpenAI API
-    """
-    
     def __init__(self):
         self.api_key = os.getenv('OPENAI_API_KEY', '')
         openai.api_key = self.api_key
     
     def analyze_resume(self, resume_text, job_description=None):
-        """
-        Анализ текста резюме с использованием OpenAI API
-        
-        Args:
-            resume_text (str): Текст резюме для анализа
-            job_description (str, optional): Текст описания вакансии для сравнения
-            
-        Returns:
-            dict: Результаты анализа
-        """
         try:
             if not self.api_key:
                 logger.warning("OpenAI API key is not set. Using simple analysis.")
                 return self._simple_analysis(resume_text)
             
-            # Создаем промпт для анализа резюме
             prompt = self._create_analysis_prompt(resume_text, job_description)
             
-            # Отправляем запрос к API
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -46,19 +30,15 @@ class AIResumeAnalyzer:
                 max_tokens=1000
             )
             
-            # Извлекаем и парсим результат
             result_text = response.choices[0].message.content.strip()
             
-            # Пытаемся распарсить JSON из ответа
             try:
-                # Извлекаем JSON из ответа (он может быть обёрнут в текст)
                 start_idx = result_text.find('{')
                 end_idx = result_text.rfind('}') + 1
                 if start_idx >= 0 and end_idx > start_idx:
                     json_str = result_text[start_idx:end_idx]
                     result = json.loads(json_str)
                 else:
-                    # Если не удалось найти JSON, используем простой анализ
                     logger.warning("Failed to extract JSON from AI response. Using simple analysis.")
                     result = self._simple_analysis(resume_text)
             except json.JSONDecodeError:
@@ -72,9 +52,6 @@ class AIResumeAnalyzer:
             return self._simple_analysis(resume_text)
     
     def _create_analysis_prompt(self, resume_text, job_description=None):
-        """
-        Создает промпт для анализа резюме
-        """
         prompt = f"""
         Please analyze the following resume and return your analysis in JSON format:
         
@@ -121,10 +98,6 @@ class AIResumeAnalyzer:
         return prompt
     
     def _simple_analysis(self, text):
-        """
-        Простой анализ для случаев, когда API недоступно
-        """
-        # Список часто используемых навыков
         common_skills = [
             "Python", "Java", "JavaScript", "React", "Vue", "Angular", "Node.js",
             "Django", "Flask", "SQL", "PostgreSQL", "MongoDB", "MySQL", "Redis",
@@ -133,13 +106,11 @@ class AIResumeAnalyzer:
             "Machine Learning", "Data Analysis", "TensorFlow", "PyTorch"
         ]
         
-        # Находим упоминания навыков в тексте
         found_skills = []
         for skill in common_skills:
             if skill.lower() in text.lower():
                 found_skills.append(skill)
         
-        # Простой анализ структуры
         structure_analysis = {
             "has_contact_info": "email" in text.lower() or "телефон" in text.lower(),
             "has_professional_summary": len(text) > 200,
@@ -148,21 +119,18 @@ class AIResumeAnalyzer:
             "has_skills_section": "навыки" in text.lower() or "skills" in text.lower()
         }
         
-        # Определяем качество форматирования
         format_quality = "needs_improvement"
         if len(text) > 1000 and text.count('\n') > 10:
             format_quality = "good"
         elif len(text) > 500 and text.count('\n') > 5:
             format_quality = "average"
         
-        # Простые рекомендации
         suggestions = ["Убедитесь, что резюме содержит ваши актуальные контактные данные",
                       "Добавьте количественные показатели достижений"]
         
         if len(found_skills) < 5:
             suggestions.append("Рекомендуется расширить список технических навыков")
         
-        # Итоговый балл
         overall_score = min(5 + len(found_skills) // 2, 10)
         
         return {

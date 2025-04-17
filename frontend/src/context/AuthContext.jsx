@@ -41,13 +41,15 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       
       const response = await authService.login(credentials);
-      const { token, ...userData } = response.data;
+      
+      // Изменённая часть: проверяем структуру ответа
+      const { token, user } = response.data;
       
       localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(userData));
-      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(user));
+      setUser(user);
       
-      return userData;
+      return user;
     } catch (err) {
       setError(err.response?.data?.error || 'Ошибка при входе в систему');
       throw err;

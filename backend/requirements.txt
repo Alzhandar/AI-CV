@@ -37,3 +37,6 @@ wcwidth==0.2.13
 requests==2.31.0
 openai
 django-dirtyfields
+PyPDF2 
+python-docx 
+pdfminer.six

@@ -1,186 +1,273 @@
-from rest_framework import viewsets, status
+import logging
+from django.shortcuts import get_object_or_404
+from django.http import FileResponse, Http404
+from django.conf import settings
+from django.db.models import Count, Q, Case, When, Value, IntegerField
+
+from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+from accounts.permissions import IsOwnerOrAdmin, IsJobseeker, IsAdmin, ReadOnly
+from jobs.models import Job
 
 from resumes.models import Resume, Skill
-from resumes.serializers import ResumeSerializer, SkillSerializer
-from django.shortcuts import get_object_or_404
+from resumes.serializers import (
+    ResumeSerializer, ResumeListSerializer, SkillSerializer, 
+    AnalysisResultSerializer
+)
 from resumes.tasks import analyze_resume
-from accounts.models import User
-from jobs.models import Job
-from django.db.models import Q
-from accounts.permissions import IsJobseeker, IsAdmin, IsOwnerOrAdmin
-
-from resumes.models import Resume
-from accounts.permissions import IsOwnerOrAdmin
 from resume_analyzer.utils.mongodb import get_mongodb_db
-from bson.objectid import ObjectId  
 
-class SkillViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Skill.objects.all()
+logger = logging.getLogger(__name__)
+
+
+class SkillViewSet(viewsets.ModelViewSet):
+    queryset = Skill.objects.all().order_by('category', 'name')
     serializer_class = SkillSerializer
+    lookup_field = 'slug'
     permission_classes = [IsAuthenticated]
     
-    def get_queryset(self):
-        queryset = Skill.objects.all()
-        category = self.request.query_params.get('category', None)
-        if category:
-            queryset = queryset.filter(category=category)
-        return queryset
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAuthenticated & IsAdmin]
+            
+        return [permission() for permission in permission_classes]
+        
+    @action(detail=False, methods=['get'])
+    def categories(self, request):
+        categories = [
+            {'id': category[0], 'name': category[1]}
+            for category in Skill.CATEGORY_CHOICES
+        ]
+        
+        return Response(categories)
+    
+    @action(detail=False, methods=['get'])
+    def by_category(self, request):
+        categories = {}
+        
+        skills = Skill.objects.all().order_by('name')
+        
+        for skill in skills:
+            category_id = skill.category
+            if category_id not in categories:
+                category_name = dict(Skill.CATEGORY_CHOICES).get(category_id, 'Неизвестно')
+                categories[category_id] = {
+                    'id': category_id,
+                    'name': category_name,
+                    'skills': []
+                }
+                
+            categories[category_id]['skills'].append(
+                SkillSerializer(skill).data
+            )
+        
+        return Response(list(categories.values()))
+
 
 class ResumeViewSet(viewsets.ModelViewSet):
     serializer_class = ResumeSerializer
-    permission_classes = [IsJobseeker | IsAdmin]
-    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [IsAuthenticated & (IsJobseeker | IsAdmin)]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def get_queryset(self):
         user = self.request.user
-        if user.role == User.ADMIN:
-            return Resume.objects.all()
-        return Resume.objects.filter(user=user)
+        queryset = Resume.objects.prefetch_related('skills')
+        
+        if user.is_staff or user.is_superuser:
+            return queryset
+            
+        return queryset.filter(user=user)
     
-    def get_permissions(self):
-        if self.action in ['retrieve', 'update', 'partial_update', 'destroy']:
-            self.permission_classes = [IsOwnerOrAdmin]
-        return super().get_permissions()
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ResumeListSerializer
+        return ResumeSerializer
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+            
+        queryset = queryset.order_by('-created_at')
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    def perform_create(self, serializer):
+        resume = serializer.save(user=self.request.user)
+        
+        try:
+            analyze_resume.delay(resume.id)
+            logger.info(f"Задача анализа запущена для резюме {resume.id}")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске задачи анализа резюме {resume.id}: {e}")
+            resume.status = Resume.FAILED
+            resume.save(update_fields=['status'])
+        
+        return resume
     
     @action(detail=True, methods=['post'])
-    def analyze(self, request, pk=None):
-        """Запуск анализа резюме"""
+    def reanalyze(self, request, pk=None):
         resume = self.get_object()
         
-        if resume.status == Resume.ANALYZING:
-            return Response(
-                {"error": "Резюме уже находится в процессе анализа"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        resume.status = Resume.PENDING
+        resume.save(update_fields=['status'])
         
-        resume.status = Resume.ANALYZING
-        resume.save()
-        
-        analyze_resume.delay(resume.id)
-        
-        return Response({"status": "Анализ запущен"})
+        try:
+            analyze_resume.delay(resume.id)
+            return Response({
+                'message': 'Анализ резюме запущен успешно',
+                'resume_id': resume.id
+            })
+        except Exception as e:
+            logger.error(f"Ошибка при повторном анализе резюме {resume.id}: {e}")
+            resume.status = Resume.FAILED
+            resume.save(update_fields=['status'])
+            return Response({
+                'error': 'Не удалось запустить анализ резюме'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['get'])
-    def analysis_results(self, request, pk=None):
+    def download(self, request, pk=None):
         resume = self.get_object()
         
-        if resume.status != Resume.COMPLETED:
-            return Response(
-                {"status": resume.status, "message": "Анализ еще не завершен"},
-                status=status.HTTP_200_OK
+        try:
+            return FileResponse(
+                resume.file, 
+                as_attachment=True,
+                filename=resume.get_file_name()
             )
-        
-        # Здесь будет получение результатов из MongoDB
-        # results = get_resume_analysis_from_mongodb(resume.mongodb_id)
-        
-        # Временно возвращаем заглушку
-        results = {
-            "skills_found": [skill.name for skill in resume.skills.all()],
-            "format_quality": "good",
-            "improvement_suggestions": [
-                "Добавьте больше конкретных достижений",
-                "Используйте активные глаголы в описании опыта"
-            ]
-        }
-        
-        return Response(results)
+        except Exception as e:
+            logger.error(f"Ошибка при скачивании файла резюме {resume.id}: {e}")
+            return Response({
+                'error': 'Не удалось скачать файл'
+            }, status=status.HTTP_404_NOT_FOUND)
     
+    @action(detail=True, methods=['get'])
+    def analysis(self, request, pk=None):
+        resume = self.get_object()
+        
+        if not resume.mongodb_id:
+            return Response({
+                'error': 'Анализ для этого резюме ещё не завершен'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        try:
+            db = get_mongodb_db()
+            collection = db.resume_analysis
+            
+            analysis_result = collection.find_one({"_id": resume.mongodb_id})
+            if not analysis_result:
+                return Response({
+                    'error': 'Результаты анализа не найдены'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            analysis_result['_id'] = str(analysis_result['_id'])
+            
+            serializer = AnalysisResultSerializer(analysis_result)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении результатов анализа резюме {resume.id}: {e}")
+            return Response({
+                'error': 'Не удалось получить результаты анализа'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def matching_jobs(self, request, pk=None):
+        resume = self.get_object()
+        
+        try:
+            resume_skills = resume.skills.values_list('id', flat=True)
+            
+            if not resume_skills:
+                return Response({
+                    'message': 'В резюме не найдены навыки для поиска вакансий',
+                    'jobs': []
+                })
+            
+            from jobs.models import Job
+            matching_jobs = Job.objects.filter(
+                status=Job.ACTIVE,
+                required_skills__in=resume_skills
+            ).annotate(
+                matching_skills_count=Count('required_skills', filter=Q(required_skills__in=resume_skills))
+            ).order_by('-matching_skills_count')
+            
+            from jobs.serializers import JobListSerializer
+            serializer = JobListSerializer(matching_jobs, many=True, context={'request': request})
+            
+            return Response({
+                'count': matching_jobs.count(),
+                'jobs': serializer.data
+            })
+            
+        except Exception as e:
+            logger.error(f"Ошибка при поиске подходящих вакансий для резюме {resume.id}: {e}")
+            return Response({
+                'error': 'Не удалось найти подходящие вакансии'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class AnalysisHistoryViewSet(viewsets.ViewSet):
-    """API для просмотра истории анализа резюме"""
     permission_classes = [IsAuthenticated]
     
     def list(self, request):
-        """
-        Получение списка всех анализов резюме пользователя
-        """
         user = request.user
         
         try:
             db = get_mongodb_db()
             collection = db.resume_analysis
             
-            # Поиск всех анализов пользователя
-            results = list(collection.find(
-                {"user_id": user.id}, 
-                {"_id": 1, "resume_id": 1, "created_at": 1, 
-                 "analysis_results.overall_score": 1}
-            ))
+            analysis_history = list(collection.find(
+                {"user_id": user.id}
+            ).sort("created_at", -1))
             
-            # Преобразование ObjectId в строку для JSON сериализации
-            for result in results:
-                result["_id"] = str(result["_id"])
-                
-            return Response(results)
+            for item in analysis_history:
+                item['_id'] = str(item['_id'])
             
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def retrieve(self, request, pk=None):
-        """
-        Получение деталей конкретного анализа
-        """
-        try:
-            # Проверяем формат ID
-            try:
-                obj_id = ObjectId(pk)
-            except:
-                return Response(
-                    {"error": "Неверный формат ID"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            resume_ids = [item.get('resume_id') for item in analysis_history]
+            resumes = {
+                r.id: {'title': r.title, 'file_name': r.get_file_name()}
+                for r in Resume.objects.filter(id__in=resume_ids)
+            }
             
-            db = get_mongodb_db()
-            collection = db.resume_analysis
+            for item in analysis_history:
+                resume_id = item.get('resume_id')
+                if resume_id in resumes:
+                    item['resume_info'] = resumes[resume_id]
             
-            # Поиск анализа по ID
-            result = collection.find_one({"_id": obj_id})
-            
-            if not result:
-                return Response(
-                    {"error": "Анализ не найден"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Проверяем, принадлежит ли анализ текущему пользователю
-            if result["user_id"] != request.user.id and not request.user.role == 'admin':
-                return Response(
-                    {"error": "У вас нет доступа к этому анализу"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Преобразование ObjectId в строку для JSON сериализации
-            result["_id"] = str(result["_id"])
-            
-            return Response(result)
+            return Response(analysis_history)
             
         except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"Ошибка при получении истории анализа для пользователя {user.id}: {e}")
+            return Response({
+                'error': 'Не удалось получить историю анализа'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['get'])
     def statistics(self, request):
-        """
-        Получение статистики по всем анализам пользователя
-        """
         user = request.user
         
         try:
             db = get_mongodb_db()
             collection = db.resume_analysis
             
-            # Подсчет количества анализов
             total_count = collection.count_documents({"user_id": user.id})
             
-            # Средний балл (если возможно)
             pipeline = [
                 {"$match": {"user_id": user.id}},
                 {"$group": {
@@ -192,7 +279,6 @@ class AnalysisHistoryViewSet(viewsets.ViewSet):
             avg_result = list(collection.aggregate(pipeline))
             avg_score = avg_result[0]["avg_score"] if avg_result else None
             
-            # Навыки из всех анализов
             pipeline = [
                 {"$match": {"user_id": user.id}},
                 {"$unwind": "$analysis_results.skills_found"},
@@ -200,20 +286,43 @@ class AnalysisHistoryViewSet(viewsets.ViewSet):
                     "_id": "$analysis_results.skills_found",
                     "count": {"$sum": 1}
                 }},
-                {"$sort": {"count": -1}}
+                {"$sort": {"count": -1}},
+                {"$limit": 20} 
             ]
             
             skills = list(collection.aggregate(pipeline))
-            skills_summary = {item["_id"]: item["count"] for item in skills}
+            
+            skills_categories = {}
+            skills_in_db = Skill.objects.filter(name__in=[s["_id"] for s in skills])
+            
+            for skill in skills_in_db:
+                category = skill.category
+                if category not in skills_categories:
+                    skills_categories[category] = {
+                        'name': dict(Skill.CATEGORY_CHOICES).get(category),
+                        'count': 0
+                    }
+                skills_categories[category]['count'] += 1
+            
+            last_analysis_date = None
+            if total_count > 0:
+                last_analysis = collection.find_one(
+                    {"user_id": user.id}, 
+                    sort=[("created_at", -1)]
+                )
+                if last_analysis:
+                    last_analysis_date = last_analysis.get("created_at")
             
             return Response({
-                "total_analyses": total_count,
-                "average_score": avg_score,
-                "skills_summary": skills_summary
+                'total_analyses': total_count,
+                'average_score': avg_score,
+                'top_skills': skills,
+                'skills_by_category': list(skills_categories.values()),
+                'last_analysis_date': last_analysis_date
             })
             
         except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"Ошибка при получении статистики анализа для пользователя {user.id}: {e}")
+            return Response({
+                'error': 'Не удалось получить статистику анализа'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

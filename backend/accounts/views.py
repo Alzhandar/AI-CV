@@ -69,11 +69,18 @@ class LoginView(views.APIView):
                     {'error': 'Аккаунт деактивирован'},
                     status=status.HTTP_403_FORBIDDEN
                 )
-                
+            
             login(request, user)
+            
+            from rest_framework.authtoken.models import Token
+            token, created = Token.objects.get_or_create(user=user)
+            
             serializer = UserSerializer(user)
+            user_data = serializer.data
+            
             return Response({
-                'user': serializer.data,
+                'token': token.key,  
+                'user': user_data,
                 'message': f'Добро пожаловать, {user.full_name}!'
             })
         else:
