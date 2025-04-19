@@ -2,6 +2,9 @@
 
 AI-CV is a comprehensive platform for resume analysis, skills extraction, and job matching. The system leverages AI to analyze resumes, extract skills, and suggest matching job opportunities based on candidates' profiles.
 
+## Youtube (https://youtu.be/j0maCbvP40U?si=Or3OCcGw7Vkr5U2u) - part 1
+part-2 processing
+
 ## Overview
 
 The AI-CV platform provides powerful tools for both job seekers and recruiters:
