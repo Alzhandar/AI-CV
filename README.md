@@ -16,7 +16,7 @@ The AI-CV platform provides powerful tools for both job seekers and recruiters:
 
 The platform is built using a modern microservices architecture:
 
-![Docker Containers](/AI-CV/frontend/src/assets/docker.png)
+![Docker Containers](./frontend/src/assets/docker.png)
 
 - **Web Backend**: Django REST Framework serving the API
 - **Databases**:
@@ -31,16 +31,15 @@ The platform is built using a modern microservices architecture:
 
 The platform provides a comprehensive API for integration with frontend applications or third-party services:
 
-![API Overview](/AI-CV/frontend/src/assets/1-part-swagger.png)
-![API Overview](/AI-CV/frontend/src/assets/2-part-swagger.png)
-![API Overview](/AI-CV/frontend/src/assets/3-part-swagger.png)
-
+![API Overview](./frontend/src/assets/1-part-swagger.png)
+![API Overview](./frontend/src/assets/2-part-swagger.png)
+![API Overview](./frontend/src/assets/3-part-swagger.png)
 
 ## Admin Interface
 
 The platform includes a powerful administrative interface for managing users, resumes, and job listings:
 
-![Admin Interface](/AI-CV/frontend/src/assets/django-admin.png)
+![Admin Interface](./frontend/src/assets/django-admin.png)
 
 ## Key Features
 
