@@ -1,75 +1,65 @@
+import os
+import uuid
 import logging
-from typing import Optional, Any
-
-from django.conf import settings
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
 logger = logging.getLogger(__name__)
 
-_mongo_client: Optional[MongoClient] = None
-_mongo_db = None
+# Глобальный клиент MongoDB
+_mongo_client = None
 
-
-def get_mongodb_client() -> MongoClient:
+def get_mongodb_client():
+    """
+    Получить подключение к MongoDB.
+    Использует имя сервиса Docker (ai_cv_mongodb) вместо localhost.
+    """
     global _mongo_client
     
     if _mongo_client is not None:
         return _mongo_client
+        
+    # Используем переменную окружения или имя сервиса Docker
+    mongo_host = os.environ.get('MONGODB_HOST', 'ai_cv_mongodb')
+    mongo_port = int(os.environ.get('MONGODB_PORT', 27017))
+    mongo_user = os.environ.get('MONGODB_USERNAME', '')
+    mongo_pass = os.environ.get('MONGODB_PASSWORD', '')
     
-    mongo_uri = getattr(settings, 'MONGO_URI', None)
-    mongo_host = getattr(settings, 'MONGO_HOST', 'localhost')
-    mongo_port = getattr(settings, 'MONGO_PORT', 27017)
-    mongo_user = getattr(settings, 'MONGO_USER', None)
-    mongo_password = getattr(settings, 'MONGO_PASSWORD', None)
+    connection_string = f"mongodb://{mongo_host}:{mongo_port}/"
+    
+    # Добавляем авторизацию, если учетные данные предоставлены
+    if mongo_user and mongo_pass:
+        connection_string = f"mongodb://{mongo_user}:{mongo_pass}@{mongo_host}:{mongo_port}/"
+    
+    logger.info(f"Подключение к MongoDB: {mongo_host}:{mongo_port}")
     
     try:
-        if mongo_uri:
-            _mongo_client = MongoClient(mongo_uri)
-            logger.info("Подключение к MongoDB успешно установлено через URI")
-        else:
-            connection_args = {
-                'host': mongo_host,
-                'port': mongo_port
-            }
-            
-            if mongo_user and mongo_password:
-                connection_args['username'] = mongo_user
-                connection_args['password'] = mongo_password
-            
-            _mongo_client = MongoClient(**connection_args)
-            logger.info(f"Подключение к MongoDB успешно установлено на {mongo_host}:{mongo_port}")
-        
-        _mongo_client.admin.command('ping')
-        
-        return _mongo_client
-        
-    except Exception as e:
-        logger.error(f"Ошибка подключения к MongoDB: {str(e)}")
+        client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
+        # Проверяем соединение
+        client.admin.command('ping')
+        logger.info("Успешное подключение к MongoDB")
+        _mongo_client = client
+        return client
+    except ConnectionFailure as e:
+        logger.error(f"Ошибка подключения к MongoDB: {e}")
+        # В случае ошибки возвращаем None и позволяем вызывающему коду обработать ошибку
         raise ConnectionError(f"Не удалось подключиться к MongoDB: {str(e)}")
 
+def get_mongodb_db():
+    """
+    Получить базу данных MongoDB.
+    """
+    db_name = os.environ.get('MONGODB_DATABASE', 'resume_analyzer')
+    
+    try:
+        client = get_mongodb_client()
+        return client[db_name]
+    except ConnectionError as e:
+        logger.error(f"Ошибка при получении базы данных MongoDB: {e}")
+        return None
 
-def get_mongodb_db(db_name: Optional[str] = None) -> Any:
-    global _mongo_db
-    
-    if _mongo_db is not None and db_name is None:
-        return _mongo_db
-    
-    db_name = db_name or getattr(settings, 'MONGO_DB_NAME', 'resume_analyzer')
-    client = get_mongodb_client()
-    _mongo_db = client[db_name]
-    
-    return _mongo_db
-
-
-def close_mongodb_connection() -> None:
-    global _mongo_client, _mongo_db
-    
-    if _mongo_client is not None:
-        try:
-            _mongo_client.close()
-            logger.info("Соединение с MongoDB закрыто")
-        except Exception as e:
-            logger.error(f"Ошибка при закрытии соединения с MongoDB: {str(e)}")
-        finally:
-            _mongo_client = None
-            _mongo_db = None
+def generate_mongodb_id():
+    """
+    Генерирует фиктивный ID в формате UUID, если MongoDB недоступна.
+    """
+    return str(uuid.uuid4())

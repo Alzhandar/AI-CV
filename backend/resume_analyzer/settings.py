@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken', 
+    'drf_spectacular'
     
 
 ]
@@ -90,18 +91,10 @@ WSGI_APPLICATION = 'resume_analyzer.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('POSTGRES_DB', 'ai_cv_db'),
-        'USER': os.getenv('POSTGRES_USER', 'postgres'),
-        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
-        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
-        'PORT': os.getenv('POSTGRES_PORT', '5432'),
-        'CONN_MAX_AGE': 600,
-        'OPTIONS': {
-            'connect_timeout': 10,
-        }
-    },
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        },
     'logs': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': os.getenv('MYSQL_DB', 'ai_cv_logs'),
@@ -118,12 +111,8 @@ DATABASES = {
 DATABASE_ROUTERS = ['resume_analyzer.routers.LogRouter']
 
 # MongoDB settings
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
-MONGO_DB_NAME = os.getenv('MONGO_DB_NAME', 'resume_analyzer')
-MONGO_HOST = os.getenv('MONGO_HOST', 'localhost')
-MONGO_PORT = int(os.getenv('MONGO_PORT', 27017))
-MONGO_USER = os.getenv('MONGO_USER') or None
-MONGO_PASSWORD = os.getenv('MONGO_PASSWORD') or None
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://mongodb:27017/')  # Используйте имя сервиса из docker-compose
+MONGO_HOST = os.getenv('MONGO_HOST', 'mongodb')  # Используйте имя сервиса вместо localhost
 
 
 # Password validation
@@ -178,14 +167,14 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',  # или AllowAny
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10
+    'PAGE_SIZE': 10,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+
 }
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 
 LANGUAGE_CODE = 'ru-RU'
 TIME_ZONE = 'Asia/Almaty'
@@ -201,5 +190,45 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:8000',  
+]
+
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+if DEBUG:
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    CSRF_COOKIE_SAMESITE = 'Lax'
+
+
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_HTTPONLY = False  
+SESSION_COOKIE_SAMESITE = 'Lax'  
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'AI-CV API',
+    'DESCRIPTION': 'API для анализа резюме, поиска вакансий и управления профилями',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': r'/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': False,
+    },
+    'TAGS': [
+        {'name': 'auth', 'description': 'Аутентификация и регистрация'},
+        {'name': 'resumes', 'description': 'Управление резюме и их анализ'},
+        {'name': 'jobs', 'description': 'Управление вакансиями и поиск работы'},
+        {'name': 'profiles', 'description': 'Профили пользователей'},
+    ]
+}

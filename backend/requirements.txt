@@ -40,3 +40,5 @@ django-dirtyfields
 PyPDF2 
 python-docx 
 pdfminer.six
+nltk==3.8.1
+drf-spectacular==0.27.0

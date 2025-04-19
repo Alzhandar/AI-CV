@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link as RouterLink, useNavigate, useLocation } from 'react-router-dom';
 import { TextField, Button, Typography, Paper, Box, Alert, Link } from '@mui/material';
 import { useFormik } from 'formik';
 import * as yup from 'yup';
@@ -12,14 +12,22 @@ const validationSchema = yup.object({
     .required('Email обязателен'),
   password: yup
     .string('Введите пароль')
-    .min(8, 'Пароль должен быть не менее 8 символов')
     .required('Пароль обязателен'),
 });
 
 const LoginPage = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    // Проверяем сообщение из состояния навигации
+    if (location.state?.message) {
+      setSuccessMessage(location.state.message);
+    }
+  }, [location]);
 
   const formik = useFormik({
     initialValues: {
@@ -29,10 +37,31 @@ const LoginPage = () => {
     validationSchema: validationSchema,
     onSubmit: async (values) => {
       try {
+        console.log('Отправляемые данные для входа:', values);
         await login(values);
         navigate('/dashboard');
       } catch (err) {
-        setError(err.response?.data?.error || 'Ошибка входа. Проверьте учетные данные.');
+        console.error('Ошибка входа:', err);
+        
+        // Улучшенная обработка ошибок
+        if (err.response && err.response.data) {
+          const errorData = err.response.data;
+          if (typeof errorData === 'string') {
+            setError(errorData);
+          } else if (errorData.error) {
+            setError(errorData.error);
+          } else if (errorData.detail) {
+            setError(errorData.detail);
+          } else if (errorData.non_field_errors) {
+            setError(Array.isArray(errorData.non_field_errors) 
+              ? errorData.non_field_errors.join(', ') 
+              : errorData.non_field_errors);
+          } else {
+            setError('Ошибка входа. Проверьте учетные данные.');
+          }
+        } else {
+          setError('Ошибка соединения с сервером. Пожалуйста, попробуйте позже.');
+        }
       }
     },
   });
@@ -49,6 +78,12 @@ const LoginPage = () => {
         <Typography component="h1" variant="h5" align="center" gutterBottom>
           Вход в систему
         </Typography>
+        
+        {successMessage && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {successMessage}
+          </Alert>
+        )}
         
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
