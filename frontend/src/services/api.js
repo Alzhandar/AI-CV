@@ -76,6 +76,7 @@ const resumeService = {
   delete: (id) => api.delete(`/resumes/resumes/${id}/`),
   analyze: (id) => api.post(`/resumes/resumes/${id}/reanalyze/`),
   getAnalysisResults: (id) => api.get(`/resumes/resumes/${id}/analysis/`),
+  getMatchingJobs: (id) => api.get(`/resumes/resumes/${id}/matching_jobs/`),
 };
 
 const jobService = {

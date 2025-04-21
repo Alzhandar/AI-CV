@@ -252,33 +252,41 @@ class ResumeViewSet(viewsets.ModelViewSet):
             
             if not resume_skills:
                 return Response({
-                    'message': 'В резюме не найдены навыки для поиска вакансий',
-                    'jobs': []
+                    'jobs': [],
+                    'message': 'В резюме не найдены навыки для подбора вакансий'
                 })
             
             from jobs.models import Job
+            from jobs.serializers import JobListSerializer
+            
             matching_jobs = Job.objects.filter(
-                status=Job.ACTIVE,
-                required_skills__in=resume_skills
-            ).annotate(
-                matching_skills_count=Count('required_skills', filter=Q(required_skills__in=resume_skills))
+                required_skills__in=resume_skills,
+                status=Job.ACTIVE 
+            ).distinct().annotate(
+                matching_skills_count=Count('required_skills', 
+                                        filter=Q(required_skills__in=resume_skills))
             ).order_by('-matching_skills_count')
             
-            from jobs.serializers import JobListSerializer
-            serializer = JobListSerializer(matching_jobs, many=True, context={'request': request})
+            matching_jobs = matching_jobs.select_related('company').prefetch_related('required_skills')
+            
+            serializer = JobListSerializer(
+                matching_jobs, 
+                many=True, 
+                context={'request': request}
+            )
             
             return Response({
-                'count': matching_jobs.count(),
-                'jobs': serializer.data
+                'jobs': serializer.data,
+                'count': matching_jobs.count()
             })
             
         except Exception as e:
-            logger.error(f"Ошибка при поиске подходящих вакансий для резюме {resume.id}: {e}")
+            logger.error(f"Ошибка при получении подходящих вакансий для резюме {resume.id}: {e}")
             return Response({
-                'error': 'Не удалось найти подходящие вакансии'
+                'error': 'Не удалось найти подходящие вакансии',
+                'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+        
 class AnalysisHistoryViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     
