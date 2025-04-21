@@ -13,7 +13,7 @@ import datetime
 from bson.objectid import ObjectId
 from accounts.permissions import IsOwnerOrAdmin, IsJobseeker, IsAdmin, ReadOnly
 from jobs.models import Job
-
+from resume_analyzer.utils.ai_analyzer import AIResumeAnalyzer
 from resumes.models import Resume, Skill
 from resumes.serializers import (
     ResumeSerializer, ResumeListSerializer, SkillSerializer, 
@@ -286,7 +286,67 @@ class ResumeViewSet(viewsets.ModelViewSet):
                 'error': 'Не удалось найти подходящие вакансии',
                 'detail': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def gpt_analyze(self, request, pk=None):
+        resume = self.get_object()
         
+        try:
+            if resume.mongodb_id:
+                db = get_mongodb_db()
+                collection = db.resume_analysis
+                
+                # Попробуем преобразовать MongoDB ID в ObjectId, если он является строкой
+                mongodb_id = resume.mongodb_id
+                if isinstance(mongodb_id, str):
+                    try:
+                        mongodb_id = ObjectId(mongodb_id)
+                    except:
+                        pass
+                
+                analysis_record = collection.find_one({"_id": mongodb_id})
+                
+                # Добавляем проверку на None
+                if analysis_record is None:
+                    return Response({
+                        'error': 'Результаты анализа не найдены в базе данных. Возможно, анализ еще не завершен.'
+                    }, status=status.HTTP_404_NOT_FOUND)
+                
+                resume_text = analysis_record.get("extracted_text", "")
+                
+                # Проверяем, есть ли текст резюме
+                if not resume_text:
+                    return Response({
+                        'error': 'В результатах анализа не найден текст резюме.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            else:
+                return Response({
+                    'error': 'Анализ резюме еще не был выполнен. Пожалуйста, дождитесь завершения базового анализа.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            analyzer = AIResumeAnalyzer()
+            ai_analysis = analyzer.analyze_resume(resume_text)
+            
+            if resume.mongodb_id:
+                # Сохраняем результаты AI анализа в MongoDB
+                collection.update_one(
+                    {"_id": mongodb_id},
+                    {"$set": {"gpt_analysis": ai_analysis, "gpt_analysis_date": datetime.datetime.now()}}
+                )
+            
+            return Response({
+                'analysis': ai_analysis,
+                'message': 'Анализ с использованием AI успешно выполнен'
+            })
+            
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении AI анализа резюме {resume.id}: {str(e)}")
+            return Response({
+                'error': 'Не удалось выполнить AI анализ резюме',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
 class AnalysisHistoryViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     

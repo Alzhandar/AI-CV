@@ -14,43 +14,50 @@ class AIResumeAnalyzer:
     
     def analyze_resume(self, resume_text, job_description=None):
         try:
+            if not resume_text or len(resume_text.strip()) < 10:
+                logger.warning("Resume text is empty or too short. Using simple analysis.")
+                return self._simple_analysis("")
+                
             if not self.api_key:
                 logger.warning("OpenAI API key is not set. Using simple analysis.")
                 return self._simple_analysis(resume_text)
             
             prompt = self._create_analysis_prompt(resume_text, job_description)
             
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an expert resume analyzer. Analyze the resume and provide detailed feedback in JSON format."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.5,
-                max_tokens=1000
-            )
-            
-            result_text = response.choices[0].message.content.strip()
-            
             try:
-                start_idx = result_text.find('{')
-                end_idx = result_text.rfind('}') + 1
-                if start_idx >= 0 and end_idx > start_idx:
-                    json_str = result_text[start_idx:end_idx]
-                    result = json.loads(json_str)
-                else:
-                    logger.warning("Failed to extract JSON from AI response. Using simple analysis.")
-                    result = self._simple_analysis(resume_text)
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse AI response as JSON. Using simple analysis.")
-                result = self._simple_analysis(resume_text)
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are an expert resume analyzer. Analyze the resume and provide detailed feedback in JSON format."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5,
+                    max_tokens=1000
+                )
                 
+                result_text = response.choices[0].message.content.strip()
+                
+                try:
+                    start_idx = result_text.find('{')
+                    end_idx = result_text.rfind('}') + 1
+                    if start_idx >= 0 and end_idx > start_idx:
+                        json_str = result_text[start_idx:end_idx]
+                        result = json.loads(json_str)
+                    else:
+                        logger.warning("Failed to extract JSON from AI response. Using simple analysis.")
+                        result = self._simple_analysis(resume_text)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse AI response as JSON. Using simple analysis.")
+                    result = self._simple_analysis(resume_text)
+            except Exception as api_error:
+                logger.error(f"OpenAI API error: {str(api_error)}")
+                result = self._simple_analysis(resume_text)
+                    
             return result
             
         except Exception as e:
             logger.error(f"Error in AI resume analysis: {str(e)}")
             return self._simple_analysis(resume_text)
-    
     def _create_analysis_prompt(self, resume_text, job_description=None):
         prompt = f"""
         Please analyze the following resume and return your analysis in JSON format:

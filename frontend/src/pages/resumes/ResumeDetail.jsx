@@ -16,10 +16,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DescriptionIcon from '@mui/icons-material/Description';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import { resumeService } from '../../services/api';
 import ResumeAnalysis from '../../components/resume/ResumeAnalysis';
 import MatchingJobs from '../../components/resume/MatchingJobs';
+import AIAnalysisResults from '../../components/resume/AIAnalysisResults';
 
 const ResumeDetailPage = () => {
   const { id } = useParams();
@@ -29,6 +31,11 @@ const ResumeDetailPage = () => {
   const [error, setError] = useState(null);
   const [reanalysisLoading, setReanalysisLoading] = useState(false);
   const [reanalysisSuccess, setReanalysisSuccess] = useState(false);
+  
+  // Состояния для AI анализа
+  const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
+  const [aiAnalysisResults, setAiAnalysisResults] = useState(null);
+  const [aiAnalysisError, setAiAnalysisError] = useState(null);
 
   useEffect(() => {
     const fetchResumeDetails = async () => {
@@ -74,6 +81,36 @@ const ResumeDetailPage = () => {
       setError('Не удалось запустить повторный анализ резюме');
     } finally {
       setReanalysisLoading(false);
+    }
+  };
+
+  // Новая функция для запуска AI анализа
+  const handleAIAnalysis = async () => {
+    try {
+      setAiAnalysisLoading(true);
+      setAiAnalysisError(null);
+      
+      const response = await resumeService.gptAnalyze(id);
+      console.log('Результаты AI анализа:', response.data);
+      
+      setAiAnalysisResults(response.data.analysis);
+      
+      // Прокрутка к результатам анализа
+      setTimeout(() => {
+        const resultsElement = document.getElementById('ai-analysis-results');
+        if (resultsElement) {
+          resultsElement.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+      
+    } catch (err) {
+      console.error('Ошибка при выполнении AI анализа:', err);
+      setAiAnalysisError(
+        err.response?.data?.error || 
+        'Не удалось выполнить AI анализ резюме'
+      );
+    } finally {
+      setAiAnalysisLoading(false);
     }
   };
 
@@ -191,8 +228,19 @@ const ResumeDetailPage = () => {
               startIcon={reanalysisLoading ? <CircularProgress size={20} color="inherit" /> : <RefreshIcon />}
               onClick={handleReanalyze}
               disabled={reanalysisLoading || resume.status === 'processing' || resume.status === 'pending'}
+              sx={{ mr: 1 }}
             >
               {reanalysisLoading ? 'Запуск...' : 'Повторный анализ'}
+            </Button>
+            {/* Кнопка AI анализа */}
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={aiAnalysisLoading ? <CircularProgress size={20} color="inherit" /> : <SmartToyIcon />}
+              onClick={handleAIAnalysis}
+              disabled={aiAnalysisLoading || resume.status !== 'completed'}
+            >
+              {aiAnalysisLoading ? 'Анализ...' : 'Анализ GPT'}
             </Button>
           </Box>
         </Box>
@@ -200,6 +248,12 @@ const ResumeDetailPage = () => {
         {reanalysisSuccess && (
           <Alert severity="success" sx={{ mb: 2 }}>
             Повторный анализ успешно запущен! Пожалуйста, подождите...
+          </Alert>
+        )}
+        
+        {aiAnalysisError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {aiAnalysisError}
           </Alert>
         )}
         
@@ -267,6 +321,13 @@ const ResumeDetailPage = () => {
             </Box>
           )}
         </Paper>
+        
+        {/* Отображаем результаты AI анализа, если они есть */}
+        {aiAnalysisResults && (
+          <div id="ai-analysis-results">
+            <AIAnalysisResults results={aiAnalysisResults} />
+          </div>
+        )}
         
         {/* Отображаем результаты анализа только если анализ завершен */}
         {resume.status === 'completed' && (

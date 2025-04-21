@@ -61,7 +61,6 @@ const authService = {
   updateProfile: (userData) => api.put('/profile/', userData), // Исправлено с auth/profile/ на profile/
 };
 
-// Остальной код без изменений
 const resumeService = {
   getAll: () => api.get('/resumes/resumes/'),
   get: (id) => api.get(`/resumes/resumes/${id}/`),
@@ -77,16 +76,17 @@ const resumeService = {
   analyze: (id) => api.post(`/resumes/resumes/${id}/reanalyze/`),
   getAnalysisResults: (id) => api.get(`/resumes/resumes/${id}/analysis/`),
   getMatchingJobs: (id) => api.get(`/resumes/resumes/${id}/matching_jobs/`),
+  gptAnalyze: (id) => api.post(`/resumes/resumes/${id}/gpt_analyze/`),
 };
 
 const jobService = {
-  getAll: () => api.get('/jobs/'),
-  get: (id) => api.get(`/jobs/${id}/`),
-  create: (data) => api.post('/jobs/', data),
-  update: (id, data) => api.put(`/jobs/${id}/`, data),
-  delete: (id) => api.delete(`/jobs/${id}/`),
+  getAll: () => api.get('/jobs/job-listings/'),
+  get: (identifier) => api.get(`/jobs/job-listings/${identifier}/`),
+  create: (data) => api.post('/jobs/job-listings/', data),
+  update: (id, data) => api.put(`/jobs/job-listings/${id}/`, data),
+  delete: (id) => api.delete(`/jobs/job-listings/${id}/`),
   getMatching: () => api.get('/jobs/matching/'),
-  matchResume: (jobId, resumeId) => api.get(`/jobs/${jobId}/match_resume/?resume_id=${resumeId}`),
+  matchResume: (jobId, resumeId) => api.get(`/jobs/job-listings/${jobId}/match_resume/?resume_id=${resumeId}`),
 };
 
 const companyService = {

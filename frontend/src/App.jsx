@@ -6,7 +6,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ResumeDetailPage from './pages/resumes/ResumeDetail';
 import Layout from './components/layout/Layout';
-
+import JobDetailPage from './pages/jobs/JobDetailPage'; 
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
@@ -58,6 +58,11 @@ const AppRoutes = () => {
       <Route path="/resumes/:id" element={
         <ProtectedRoute>
           <ResumeDetailPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/jobs/:id" element={
+        <ProtectedRoute>
+          <JobDetailPage />
         </ProtectedRoute>
       } />
       <Route path="*" element={<NotFoundPage />} />
